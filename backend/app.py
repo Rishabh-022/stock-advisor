@@ -2,27 +2,21 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import yfinance as yf
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer 
-# Google News RSS imports (built into Python - no pip install needed!)
 import urllib.request
 import xml.etree.ElementTree as ET
-# Database imports
+
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
-CORS(app)  # This allows your React website to talk to this Python script
+CORS(app) 
 
-# Initialize the AI News Reader
 analyzer = SentimentIntensityAnalyzer()
 
-# ==========================================
-# DATABASE CONFIGURATION
-# ==========================================
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///advisor.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# Create the User Table
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
@@ -30,26 +24,18 @@ class User(db.Model):
     password = db.Column(db.String(200), nullable=False)
     created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
 
-# ==========================================
-# NEW: WATCHLIST TABLE
-# ==========================================
 class Watchlist(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     symbol = db.Column(db.String(20), nullable=False)
     name = db.Column(db.String(100), nullable=False)
     
-    # Relationship so we can easily get a user's watchlist
     user = db.relationship('User', backref=db.backref('watchlist', lazy=True))
 
-# Create the database file when the app starts
 with app.app_context():
     db.create_all()
     print("✅ Database initialized: advisor.db (User + Watchlist tables)")
 
-# ============================================
-# AUTHENTICATION ROUTES
-# ============================================
 @app.route('/register', methods=['POST'])
 def register():
     try:
@@ -65,11 +51,9 @@ def register():
         if len(password) < 6:
             return jsonify({"error": "Password must be at least 6 characters"}), 400
 
-        # Check if user already exists
         if User.query.filter_by(email=email).first():
             return jsonify({"error": "Email already registered"}), 400
 
-        # Secure the password and save the user
         hashed_password = generate_password_hash(password, method='pbkdf2:sha256')
         new_user = User(name=name, email=email, password=hashed_password)
         
@@ -126,9 +110,6 @@ def get_users():
     user_list = [{"id": u.id, "name": u.name, "email": u.email} for u in users]
     return jsonify({"users": user_list, "total": len(user_list)})
 
-# ============================================
-# NEW: WATCHLIST ROUTES
-# ============================================
 @app.route('/watchlist/<int:user_id>', methods=['GET'])
 def get_watchlist(user_id):
     """Get a user's watchlist"""
@@ -164,17 +145,14 @@ def add_to_watchlist():
         if not user_id or not symbol:
             return jsonify({"error": "User ID and symbol are required"}), 400
         
-        # Check if user exists
         user = User.query.get(user_id)
         if not user:
             return jsonify({"error": "User not found"}), 404
         
-        # Check if already in watchlist
         existing = Watchlist.query.filter_by(user_id=user_id, symbol=symbol).first()
         if existing:
             return jsonify({"error": f"{symbol} is already in your watchlist"}), 400
         
-        # Add to watchlist
         new_item = Watchlist(user_id=user_id, symbol=symbol, name=name)
         db.session.add(new_item)
         db.session.commit()
@@ -224,9 +202,6 @@ def check_watchlist(user_id, symbol):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# ============================================
-# HOME PAGE - Works when you visit localhost:5000
-# ============================================
 @app.route('/')
 def home():
     return '''
@@ -303,24 +278,18 @@ def home():
     </html>
     '''
 
-# ============================================
-# ANALYZE STOCK - UPGRADED WITH GOOGLE NEWS RSS
-# ============================================
 @app.route('/analyze-stock', methods=['GET', 'POST'])
 def analyze_stock():
     ticker_symbol = None
     
-    # Check if it's a POST request (from React)
     if request.method == 'POST':
         data = request.get_json()
         if data:
             ticker_symbol = data.get('ticker')
     
-    # Check if it's a GET request (from browser testing)
     if not ticker_symbol:
         ticker_symbol = request.args.get('ticker')
     
-    # If still no ticker, show error
     if not ticker_symbol:
         return jsonify({
             "error": "Please provide a ticker symbol",
@@ -328,18 +297,14 @@ def analyze_stock():
         }), 400
     
     try:
-        # Clean the ticker symbol
         ticker_symbol = ticker_symbol.upper().strip()
         
         print(f"\n" + "="*60)
         print(f"📊 FETCHING DATA FOR: {ticker_symbol}")
         print("="*60)
         
-        # 1. Fetch real data from Yahoo Finance
         stock = yf.Ticker(ticker_symbol)
         info = stock.info
-        
-        # 2. Extract financial data
         price = info.get('currentPrice') or info.get('regularMarketPrice') or info.get('previousClose', 0)
         previous_close = info.get('previousClose', price)
         change = info.get('regularMarketChangePercent', 0)
@@ -353,9 +318,6 @@ def analyze_stock():
         print(f"  🎯 Analyst Target: ${target_price:.2f}")
         print(f"  📈 Daily Change: {change:+.2f}%")
 
-        # ==========================================
-        # 3. GRAB 30-DAY PRICE HISTORY FOR CHARTS
-        # ==========================================
         print(f"\n📈 FETCHING 30-DAY PRICE HISTORY...")
         hist = stock.history(period="1mo")
         historical_data = []
@@ -368,9 +330,6 @@ def analyze_stock():
         
         print(f"  ✅ Retrieved {len(historical_data)} days of price data for chart")
 
-        # ==========================================
-        # 4. UPGRADED AI SENTIMENT (Google News RSS)
-        # ==========================================
         total_sentiment = 0
         article_count = 0
         news_summary = "Neutral"
@@ -432,9 +391,6 @@ def analyze_stock():
         print(f"\n  {sentiment_emoji} OVERALL SENTIMENT: {news_summary} (Score: {avg_sentiment:.3f})")
         print(f"  📊 Articles Analyzed: {article_count}")
 
-        # ==========================================
-        # 5. DYNAMIC AI VERDICT (Math + News)
-        # ==========================================
         verdict = "HOLD"
         confidence = 50
         verdict_color = "yellow"
@@ -555,9 +511,6 @@ def analyze_stock():
             "suggestion": "Check if the ticker symbol is correct (e.g., AAPL, TSLA)"
         }), 400
 
-# ============================================
-# PORTFOLIO RECOMMENDATION ENDPOINT
-# ============================================
 @app.route('/portfolio-recommend', methods=['GET', 'POST'])
 def portfolio_recommend():
     amount = 5000
@@ -622,9 +575,6 @@ def portfolio_recommend():
         "recommendations": recommendations
     })
 
-# ============================================
-# START THE SERVER
-# ============================================
 if __name__ == '__main__':
     print("\n" + "="*60)
     print("🚀 STOCK ADVISOR BACKEND STARTING...")
