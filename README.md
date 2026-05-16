@@ -16,7 +16,6 @@ Built with a modern **React/Vite** frontend and a robust **Python/Flask** backen
 
 ## 📸 Application Previews
 
-*(After uploading to GitHub, add your screenshots to a `/screenshots` folder and update these links)*
 
 | | | |
 |:---:|:---:|:---:|
